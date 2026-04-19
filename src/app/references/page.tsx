@@ -73,13 +73,14 @@ export default function ReferencesPage() {
     };
 
     const handleDelete = async (id: string) => {
-        if (!confirm("Delete this reference image?")) return;
-        await fetch("/api/references", {
+        const res = await fetch("/api/references", {
             method: "DELETE",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ id }),
         });
-        setReferences((prev) => prev.filter((r) => r.id !== id));
+        if (res.ok) {
+            setReferences((prev) => prev.filter((r) => r.id !== id));
+        }
     };
 
     const handleEditSave = async (id: string) => {
@@ -127,7 +128,7 @@ export default function ReferencesPage() {
                             type="text"
                             value={uploadLabel}
                             onChange={(e) => setUploadLabel(e.target.value)}
-                            placeholder="e.g. Neon cyberpunk city"
+                            placeholder="e.g. Tree"
                             className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-2.5 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--accent)]/50"
                         />
                     </div>

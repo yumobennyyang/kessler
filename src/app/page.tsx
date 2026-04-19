@@ -134,8 +134,7 @@ export default function HomePage() {
                     Text to <span className="text-[var(--accent)]">Video</span>
                 </h1>
                 <p className="text-[var(--text-muted)] text-lg max-w-2xl mx-auto">
-                    Describe your vision, select your style references, and let AI generate
-                    cinematic video in your visual language.
+                    Describe your vision and Select your style references.
                 </p>
             </div>
 
