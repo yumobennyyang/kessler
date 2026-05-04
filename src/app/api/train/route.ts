@@ -11,6 +11,20 @@ import {
 
 const TRIGGER_WORD = "KESSLER";
 
+function isReadableImage(buf: Buffer): boolean {
+    if (buf.length < 12) return false;
+    // JPEG
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true;
+    // PNG
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true;
+    // WebP (RIFF....WEBP)
+    if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+        buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return true;
+    // GIF
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return true;
+    return false;
+}
+
 export async function POST() {
     const refs = await getReferences();
 
@@ -28,13 +42,19 @@ export async function POST() {
         try {
             const zip = new JSZip();
 
+            let skipped = 0;
             for (const ref of refs) {
                 const imagePath = path.join(process.cwd(), "public", "uploads", ref.filename);
                 const buffer = await fs.readFile(imagePath);
+                if (!isReadableImage(buffer)) {
+                    console.warn(`Skipping unreadable image: ${ref.filename}`);
+                    skipped++;
+                    continue;
+                }
                 const ext = path.extname(ref.filename);
-                const base = ref.id;
-                zip.file(`${base}${ext}`, buffer);
+                zip.file(`${ref.id}${ext}`, buffer);
             }
+            console.log(`Zipped ${refs.length - skipped} images (${skipped} skipped as unreadable)`);
 
             const zipBuffer = await zip.generateAsync({ type: "nodebuffer" });
             const zipBlob = new Blob([zipBuffer.buffer as ArrayBuffer], { type: "application/zip" });

@@ -48,6 +48,10 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ status: "training" });
     } catch (err) {
         console.error("Training status error:", err);
-        return NextResponse.json({ error: "Failed to check training status" }, { status: 500 });
+        await updateTrainingJob(jobId, {
+            status: "failed",
+            error: err instanceof Error ? err.message : "Failed to check training status",
+        });
+        return NextResponse.json({ status: "failed", error: "Training failed" });
     }
 }

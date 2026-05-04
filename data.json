@@ -220,13 +220,24 @@
     },
     {
       "id": "0f514413-ad6a-45bd-99c8-75619b93ea6c",
-      "status": "training",
+      "status": "failed",
       "falRequestId": "019df15f-d8a5-7071-8e50-da33bf5066cb",
       "loraUrl": null,
       "triggerWord": "KESSLER",
       "referenceCount": 98,
-      "error": null,
+      "error": "Unprocessable Entity",
       "createdAt": "2026-05-04T05:00:36.664Z",
+      "completedAt": null
+    },
+    {
+      "id": "e6185ec6-e037-434e-94d1-d965aa75aecc",
+      "status": "training",
+      "falRequestId": "019df1ab-8b9c-71a3-8b3e-3f04242f1374",
+      "loraUrl": null,
+      "triggerWord": "KESSLER",
+      "referenceCount": 191,
+      "error": null,
+      "createdAt": "2026-05-04T06:19:41.173Z",
       "completedAt": null
     }
   ]
