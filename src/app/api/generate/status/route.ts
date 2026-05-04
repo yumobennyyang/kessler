@@ -1,82 +1,61 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateGeneration } from "@/lib/db";
-
-const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
+import { fal } from "@/lib/fal";
+import { updateGeneration, getGenerations } from "@/lib/db";
 
 export async function GET(request: NextRequest) {
-    const replicateId = request.nextUrl.searchParams.get("replicateId");
     const generationId = request.nextUrl.searchParams.get("generationId");
+    const falRequestId = request.nextUrl.searchParams.get("falRequestId");
 
-    if (!replicateId || !generationId) {
-        return NextResponse.json(
-            { error: "replicateId and generationId required" },
-            { status: 400 }
-        );
-    }
-
-    if (!REPLICATE_API_TOKEN) {
-        return NextResponse.json(
-            { error: "REPLICATE_API_TOKEN not configured" },
-            { status: 500 }
-        );
+    if (!generationId || !falRequestId) {
+        return NextResponse.json({ error: "generationId and falRequestId required" }, { status: 400 });
     }
 
     try {
-        const res = await fetch(
-            `https://api.replicate.com/v1/predictions/${encodeURIComponent(replicateId)}`,
-            {
-                headers: {
-                    Authorization: `Bearer ${REPLICATE_API_TOKEN}`,
-                },
-            }
-        );
-
-        if (!res.ok) {
-            return NextResponse.json(
-                { error: "Failed to check status" },
-                { status: 502 }
-            );
+        const gens = await getGenerations();
+        const gen = gens.find((g) => g.id === generationId);
+        if (!gen) {
+            return NextResponse.json({ error: "Generation not found" }, { status: 404 });
         }
 
-        const prediction = await res.json();
-
-        if (prediction.status === "succeeded") {
-            const videoUrl =
-                typeof prediction.output === "string"
-                    ? prediction.output
-                    : Array.isArray(prediction.output)
-                        ? prediction.output[0]
-                        : null;
-            await updateGeneration(generationId, {
-                status: "completed",
-                videoUrl,
-            });
-            return NextResponse.json({
-                status: "completed",
-                videoUrl,
-            });
+        // If DB already has a terminal status, return it immediately
+        if (gen.status === "completed") {
+            return NextResponse.json({ status: "completed", videoUrl: gen.videoUrl });
+        }
+        if (gen.status === "failed") {
+            return NextResponse.json({ status: "failed", error: gen.error });
         }
 
-        if (prediction.status === "failed" || prediction.status === "canceled") {
-            await updateGeneration(generationId, {
-                status: "failed",
-                error: prediction.error || "Generation failed",
-            });
-            return NextResponse.json({
-                status: "failed",
-                error: prediction.error || "Generation failed",
-            });
-        }
+        const endpoint = gen.falEndpoint ?? "fal-ai/hunyuan-video-lora";
 
-        // still processing
-        return NextResponse.json({
-            status: "processing",
+        const status = await fal.queue.status(endpoint, {
+            requestId: falRequestId,
+            logs: false,
         });
+
+        if (status.status === "COMPLETED") {
+            const result = await fal.queue.result(endpoint, { requestId: falRequestId });
+            const data = result.data as { video?: { url: string } };
+            const videoUrl = data?.video?.url ?? null;
+            await updateGeneration(generationId, { status: "completed", videoUrl });
+            return NextResponse.json({ status: "completed", videoUrl });
+        }
+
+        if ((status.status as string) === "FAILED") {
+            await updateGeneration(generationId, { status: "failed", error: "Generation failed on fal.ai" });
+            return NextResponse.json({ status: "failed", error: "Generation failed on fal.ai" });
+        }
+
+        return NextResponse.json({ status: "processing" });
     } catch (err) {
         console.error("Status check error:", err);
-        return NextResponse.json(
-            { error: "Failed to check status" },
-            { status: 500 }
-        );
+        // Return the DB state as fallback rather than crashing the poll
+        try {
+            const gens = await getGenerations();
+            const gen = gens.find((g) => g.id === generationId);
+            if (gen?.status === "completed" || gen?.status === "failed") {
+                return NextResponse.json({ status: gen.status, videoUrl: gen.videoUrl, error: gen.error });
+            }
+        } catch { /* ignore */ }
+        return NextResponse.json({ status: "processing" });
     }
 }

@@ -1,16 +1,16 @@
 @import "tailwindcss";
 
 :root {
-    --bg: #0a0a0a;
-    --bg-elevated: #141414;
-    --bg-card: #1a1a1a;
-    --border: #2a2a2a;
-    --border-hover: #3a3a3a;
-    --text: #f0f0f0;
-    --text-muted: #888;
-    --accent: #c8ff00;
-    --accent-dim: #a0cc00;
-    --danger: #ff4444;
+    --bg: #ffffff;
+    --bg-elevated: #f7f7f7;
+    --bg-card: #f2f2f2;
+    --border: rgba(0, 0, 0, 0.08);
+    --border-hover: rgba(0, 0, 0, 0.2);
+    --text: #000000;
+    --text-muted: rgba(0, 0, 0, 0.38);
+    --accent: #000000;
+    --accent-dim: rgba(0, 0, 0, 0.82);
+    --danger: #dc2626;
 }
 
 * {
@@ -18,7 +18,7 @@
 }
 
 html {
-    color-scheme: dark;
+    color-scheme: light;
 }
 
 body {
@@ -30,9 +30,8 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar */
 ::-webkit-scrollbar {
-    width: 6px;
+    width: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -40,59 +39,36 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: var(--border-hover);
+    background: rgba(0, 0, 0, 0.22);
 }
 
-/* Animations */
 @keyframes fadeIn {
     from {
         opacity: 0;
-        transform: translateY(8px);
+        transform: translateY(6px);
     }
-
     to {
         opacity: 1;
         transform: translateY(0);
     }
 }
 
-@keyframes pulse-glow {
-
-    0%,
-    100% {
-        box-shadow: 0 0 20px rgba(200, 255, 0, 0.1);
-    }
-
-    50% {
-        box-shadow: 0 0 40px rgba(200, 255, 0, 0.2);
-    }
-}
-
 @keyframes shimmer {
-    0% {
-        background-position: -200% 0;
-    }
-
-    100% {
-        background-position: 200% 0;
-    }
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
 }
 
 .animate-fade-in {
-    animation: fadeIn 0.4s ease-out forwards;
-}
-
-.animate-pulse-glow {
-    animation: pulse-glow 2s ease-in-out infinite;
+    animation: fadeIn 0.35s ease-out forwards;
 }
 
 .skeleton {
-    background: linear-gradient(90deg, var(--bg-card) 25%, var(--border) 50%, var(--bg-card) 75%);
+    background: linear-gradient(90deg, #ececec 25%, #e0e0e0 50%, #ececec 75%);
     background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
+    animation: shimmer 1.6s infinite;
 }

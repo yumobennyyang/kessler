@@ -12,25 +12,21 @@ export function Navbar() {
     ];
 
     return (
-        <nav className="fixed top-0 left-0 right-0 z-50 h-16 border-b border-[var(--border)] bg-[var(--bg)]/80 backdrop-blur-xl">
+        <nav className="fixed top-0 left-0 right-0 z-50 h-14 border-b border-[var(--border)] bg-[var(--bg)]/90 backdrop-blur-xl">
             <div className="mx-auto flex h-full max-w-7xl items-center justify-between px-6">
-                <Link href="/" className="flex items-center gap-2 no-underline">
-                    <div className="h-8 w-8 rounded-lg bg-[var(--accent)] flex items-center justify-center">
-                        <span className="text-black font-bold text-sm">K</span>
-                    </div>
-                    <span className="text-lg font-semibold tracking-tight text-[var(--text)]">
-                        Kessler
-                    </span>
+                <Link href="/" className="text-xs font-semibold tracking-[0.2em] text-[var(--text)] uppercase no-underline">
+                    Kessler
                 </Link>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-8">
                     {links.map((l) => (
                         <Link
                             key={l.href}
                             href={l.href}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors no-underline ${pathname === l.href
-                                    ? "bg-[var(--accent)]/10 text-[var(--accent)]"
-                                    : "text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-elevated)]"
-                                }`}
+                            className={`text-xs tracking-wide transition-colors no-underline ${
+                                pathname === l.href
+                                    ? "text-[var(--text)]"
+                                    : "text-[var(--text-muted)] hover:text-[var(--text)]"
+                            }`}
                         >
                             {l.label}
                         </Link>

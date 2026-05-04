@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { fal } from "@/lib/fal";
 import {
     addGeneration,
     updateGeneration,
     getGenerations,
     getReferences,
+    getLatestTrainingJob,
 } from "@/lib/db";
 
-const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
+const TRIGGER_WORD = "KESSLER";
+const LORA_ENDPOINT = "fal-ai/hunyuan-video-lora";
 
 export async function GET() {
     const gens = await getGenerations();
@@ -14,86 +17,52 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-    if (!REPLICATE_API_TOKEN) {
-        return NextResponse.json(
-            { error: "REPLICATE_API_TOKEN not configured" },
-            { status: 500 }
-        );
-    }
-
-    const { prompt, referenceIds } = await request.json();
+    const { prompt, videoLength } = await request.json();
+    const VALID_LENGTHS = [129, 257] as const;
+    const resolvedLength = VALID_LENGTHS.includes(videoLength) ? videoLength : 129;
 
     if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
         return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
     }
 
-    // Gather reference labels to inject into the prompt for style guidance
-    const allRefs = await getReferences();
-    const selectedRefs = allRefs.filter((r) =>
-        (referenceIds || []).includes(r.id)
-    );
-    const styleContext = selectedRefs.length
-        ? `Visual style references: ${selectedRefs.map((r) => r.label).join(", ")}. `
-        : "";
+    const [allRefs, latestJob] = await Promise.all([
+        getReferences(),
+        getLatestTrainingJob(),
+    ]);
 
-    const fullPrompt = `${styleContext}${prompt.trim()}`;
+    if (!latestJob || latestJob.status !== "completed" || !latestJob.loraUrl) {
+        return NextResponse.json({ error: "No trained model available. Train a model first." }, { status: 400 });
+    }
 
-    const gen = await addGeneration(prompt.trim(), referenceIds || []);
+    // Deduplicate subject/material pairs for style context
+    const uniqueLabels = [...new Set(allRefs.map((r) => [r.subject, r.material].filter(Boolean).join(" ")))];
+    const styleContext = uniqueLabels.join(", ");
+    const fullPrompt = `${TRIGGER_WORD} style, ${styleContext ? styleContext + ", " : ""}${prompt.trim()}`;
 
-    // Fire off Replicate prediction (async, non-blocking)
-    try {
-        await updateGeneration(gen.id, { status: "processing" });
+    const gen = await addGeneration(prompt.trim(), allRefs.map((r) => r.id));
 
-        const response = await fetch(
-            "https://api.replicate.com/v1/models/minimax/video-01/predictions",
-            {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${REPLICATE_API_TOKEN}`,
-                    "Content-Type": "application/json",
-                    Prefer: "respond-async",
-                },
-                body: JSON.stringify({
-                    input: {
-                        prompt: fullPrompt,
-                    },
-                }),
-            }
-        );
+    ;(async () => {
+        try {
+            await updateGeneration(gen.id, { status: "processing" });
 
-        if (!response.ok) {
-            const errBody = await response.text();
-            console.error("Replicate error:", response.status, errBody);
+            const input = {
+                prompt: fullPrompt,
+                loras: [{ path: latestJob.loraUrl!, scale: 1 }],
+                num_inference_steps: 30,
+                video_length: resolvedLength,
+            };
+
+            const handle = await fal.queue.submit(LORA_ENDPOINT, { input });
+
+            await updateGeneration(gen.id, { falRequestId: handle.request_id, falEndpoint: LORA_ENDPOINT });
+        } catch (err) {
+            console.error("Generation error:", err);
             await updateGeneration(gen.id, {
                 status: "failed",
-                error: `Replicate API error: ${response.status} — ${errBody}`,
+                error: err instanceof Error ? err.message : "Failed to start generation",
             });
-            return NextResponse.json(
-                { ...gen, status: "failed", error: `API error: ${response.status}` },
-                { status: 502 }
-            );
         }
+    })();
 
-        const prediction = await response.json();
-        await updateGeneration(gen.id, {
-            replicateId: prediction.id,
-            status: "processing",
-        });
-
-        return NextResponse.json({
-            ...gen,
-            replicateId: prediction.id,
-            status: "processing",
-        });
-    } catch (err) {
-        console.error("Generation error:", err);
-        await updateGeneration(gen.id, {
-            status: "failed",
-            error: "Failed to start generation",
-        });
-        return NextResponse.json(
-            { ...gen, status: "failed", error: "Failed to start generation" },
-            { status: 500 }
-        );
-    }
+    return NextResponse.json({ ...gen, status: "processing" }, { status: 202 });
 }

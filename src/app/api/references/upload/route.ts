@@ -10,10 +10,15 @@ export async function POST(request: NextRequest) {
     try {
         const formData = await request.formData();
         const file = formData.get("file") as File | null;
-        const label = (formData.get("label") as string) || "Untitled";
+        const subject = (formData.get("subject") as string)?.trim();
+        const material = (formData.get("material") as string)?.trim();
 
         if (!file) {
             return NextResponse.json({ error: "No file provided" }, { status: 400 });
+        }
+
+        if (!subject || !material) {
+            return NextResponse.json({ error: "Subject and material are required" }, { status: 400 });
         }
 
         // Validate file type
@@ -21,14 +26,6 @@ export async function POST(request: NextRequest) {
         if (!allowed.includes(file.type)) {
             return NextResponse.json(
                 { error: "Only JPEG, PNG, WebP, and GIF images are allowed" },
-                { status: 400 }
-            );
-        }
-
-        // Validate file size (max 10MB)
-        if (file.size > 10 * 1024 * 1024) {
-            return NextResponse.json(
-                { error: "File size must be under 10MB" },
                 { status: 400 }
             );
         }
@@ -45,7 +42,7 @@ export async function POST(request: NextRequest) {
         const buffer = Buffer.from(await file.arrayBuffer());
         await fs.writeFile(filePath, buffer);
 
-        const ref = await addReference(label, filename, file.name);
+        const ref = await addReference(subject, material, filename, file.name);
 
         return NextResponse.json(ref, { status: 201 });
     } catch (err) {
