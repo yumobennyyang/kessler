@@ -11,11 +11,11 @@ export async function GET() {
 }
 
 export async function PATCH(request: NextRequest) {
-    const { id, subject, material } = await request.json();
-    if (!id || !subject || !material) {
-        return NextResponse.json({ error: "id, subject, and material are required" }, { status: 400 });
+    const { id, caption } = await request.json();
+    if (!id || !caption) {
+        return NextResponse.json({ error: "id and caption are required" }, { status: 400 });
     }
-    const ref = await updateReference(id, subject, material);
+    const ref = await updateReference(id, caption);
     if (!ref) {
         return NextResponse.json({ error: "Reference not found" }, { status: 404 });
     }

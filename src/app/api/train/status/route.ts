@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fal } from "@/lib/fal";
 import { updateTrainingJob } from "@/lib/db";
 
-const FAL_ENDPOINT = "fal-ai/hunyuan-video-lora-training";
+const FAL_ENDPOINT = "fal-ai/flux-lora-fast-training";
 
 export async function GET(request: NextRequest) {
     const jobId = request.nextUrl.searchParams.get("jobId");

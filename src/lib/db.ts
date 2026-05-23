@@ -4,8 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 
 export interface Reference {
     id: string;
-    subject: string;
-    material: string;
+    caption: string;
     filename: string;
     originalName: string;
     createdAt: string;
@@ -16,6 +15,7 @@ export interface Generation {
     prompt: string;
     referenceIds: string[];
     status: "pending" | "processing" | "completed" | "failed";
+    imageUrl: string | null;
     videoUrl: string | null;
     falRequestId: string | null;
     falEndpoint: string | null;
@@ -35,6 +35,16 @@ export interface TrainingJob {
     completedAt: string | null;
 }
 
+interface RawReference {
+    id: string;
+    caption?: string;
+    subject?: string;
+    material?: string;
+    filename: string;
+    originalName: string;
+    createdAt: string;
+}
+
 interface DB {
     references: Reference[];
     generations: Generation[];
@@ -43,12 +53,22 @@ interface DB {
 
 const DB_PATH = path.join(process.cwd(), "data.json");
 
+function migrateReference(r: RawReference): Reference {
+    return {
+        id: r.id,
+        caption: r.caption ?? ([r.subject, r.material].filter(Boolean).join(", ") || r.originalName),
+        filename: r.filename,
+        originalName: r.originalName,
+        createdAt: r.createdAt,
+    };
+}
+
 async function readDB(): Promise<DB> {
     try {
         const raw = await fs.readFile(DB_PATH, "utf-8");
         const parsed = JSON.parse(raw);
         return {
-            references: parsed.references ?? [],
+            references: (parsed.references ?? []).map(migrateReference),
             generations: parsed.generations ?? [],
             trainingJobs: parsed.trainingJobs ?? [],
         };
@@ -70,16 +90,14 @@ export async function getReferences(): Promise<Reference[]> {
 }
 
 export async function addReference(
-    subject: string,
-    material: string,
+    caption: string,
     filename: string,
     originalName: string
 ): Promise<Reference> {
     const db = await readDB();
     const ref: Reference = {
         id: uuidv4(),
-        subject,
-        material,
+        caption,
         filename,
         originalName,
         createdAt: new Date().toISOString(),
@@ -91,14 +109,12 @@ export async function addReference(
 
 export async function updateReference(
     id: string,
-    subject: string,
-    material: string
+    caption: string
 ): Promise<Reference | null> {
     const db = await readDB();
     const ref = db.references.find((r) => r.id === id);
     if (!ref) return null;
-    ref.subject = subject;
-    ref.material = material;
+    ref.caption = caption;
     await writeDB(db);
     return ref;
 }
@@ -133,6 +149,7 @@ export async function addGeneration(
         prompt,
         referenceIds,
         status: "pending",
+        imageUrl: null,
         videoUrl: null,
         falRequestId: null,
         falEndpoint: null,
@@ -146,7 +163,7 @@ export async function addGeneration(
 
 export async function updateGeneration(
     id: string,
-    updates: Partial<Pick<Generation, "status" | "videoUrl" | "falRequestId" | "falEndpoint" | "error">>
+    updates: Partial<Pick<Generation, "status" | "imageUrl" | "videoUrl" | "falRequestId" | "falEndpoint" | "error">>
 ): Promise<Generation | null> {
     const db = await readDB();
     const gen = db.generations.find((g) => g.id === id);
@@ -161,6 +178,15 @@ export async function getLatestTrainingJob(): Promise<TrainingJob | null> {
     const db = await readDB();
     if (!db.trainingJobs.length) return null;
     return db.trainingJobs.sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    )[0];
+}
+
+export async function getLatestCompletedTrainingJob(): Promise<TrainingJob | null> {
+    const db = await readDB();
+    const completed = db.trainingJobs.filter((j) => j.status === "completed" && j.loraUrl);
+    if (!completed.length) return null;
+    return completed.sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     )[0];
 }

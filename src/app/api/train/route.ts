@@ -9,18 +9,14 @@ import {
     updateTrainingJob,
 } from "@/lib/db";
 
-const TRIGGER_WORD = "KESSLER";
+const TRIGGER_WORD = "KESSLER material";
 
 function isReadableImage(buf: Buffer): boolean {
     if (buf.length < 12) return false;
-    // JPEG
     if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true;
-    // PNG
     if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true;
-    // WebP (RIFF....WEBP)
     if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
         buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return true;
-    // GIF
     if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return true;
     return false;
 }
@@ -37,7 +33,6 @@ export async function POST() {
 
     const job = await addTrainingJob(TRIGGER_WORD, refs.length);
 
-    // Build ZIP with images + caption files in the background
     ;(async () => {
         try {
             const zip = new JSZip();
@@ -52,7 +47,14 @@ export async function POST() {
                     continue;
                 }
                 const ext = path.extname(ref.filename);
-                zip.file(`${ref.id}${ext}`, buffer);
+                const stem = ref.id;
+                zip.file(`${stem}${ext}`, buffer);
+
+                // Caption file: trigger word + visual description for style learning
+                const captionText = ref.caption
+                    ? `${TRIGGER_WORD}, ${ref.caption}`
+                    : TRIGGER_WORD;
+                zip.file(`${stem}.txt`, captionText);
             }
             console.log(`Zipped ${refs.length - skipped} images (${skipped} skipped as unreadable)`);
 
@@ -61,13 +63,16 @@ export async function POST() {
             const zipFile = new File([zipBlob], "training.zip", { type: "application/zip" });
             const zipUrl = await fal.storage.upload(zipFile);
 
-            const handle = await fal.queue.submit("fal-ai/hunyuan-video-lora-training", {
+            const validImages = refs.length - skipped;
+            const steps = Math.round(validImages * 30);
+
+            const handle = await fal.queue.submit("fal-ai/flux-lora-fast-training", {
                 input: {
                     images_data_url: zipUrl,
-                    steps: 1000,
                     trigger_word: TRIGGER_WORD,
-                    learning_rate: 0.0001,
-                    do_caption: true,
+                    is_style: true,
+                    create_masks: false,
+                    steps,
                 },
             });
 
@@ -87,8 +92,9 @@ export async function POST() {
     return NextResponse.json(job, { status: 202 });
 }
 
-export async function GET() {
-    const { getLatestTrainingJob } = await import("@/lib/db");
-    const job = await getLatestTrainingJob();
+export async function GET(request: import("next/server").NextRequest) {
+    const { getLatestTrainingJob, getLatestCompletedTrainingJob } = await import("@/lib/db");
+    const completed = request.nextUrl.searchParams.get("completed");
+    const job = completed ? await getLatestCompletedTrainingJob() : await getLatestTrainingJob();
     return NextResponse.json(job ?? null);
 }

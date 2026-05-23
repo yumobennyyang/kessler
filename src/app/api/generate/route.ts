@@ -5,11 +5,15 @@ import {
     updateGeneration,
     getGenerations,
     getReferences,
-    getLatestTrainingJob,
+    getLatestCompletedTrainingJob,
 } from "@/lib/db";
 
-const TRIGGER_WORD = "KESSLER";
-const LORA_ENDPOINT = "fal-ai/hunyuan-video-lora";
+const TRIGGER_WORD = "KESSLER material";
+const FLUX_ENDPOINT = "fal-ai/flux-lora";
+const WAN_I2V_ENDPOINT = "fal-ai/wan/v2.2-a14b/image-to-video/lora";
+
+// 5s ≈ 81 frames at ~16fps, 10s ≈ 161 frames
+const DURATION_FRAMES: Record<number, number> = { 129: 81, 257: 161 };
 
 export async function GET() {
     const gens = await getGenerations();
@@ -27,17 +31,12 @@ export async function POST(request: NextRequest) {
 
     const [allRefs, latestJob] = await Promise.all([
         getReferences(),
-        getLatestTrainingJob(),
+        getLatestCompletedTrainingJob(),
     ]);
 
     if (!latestJob || latestJob.status !== "completed" || !latestJob.loraUrl) {
         return NextResponse.json({ error: "No trained model available. Train a model first." }, { status: 400 });
     }
-
-    // Deduplicate subject/material pairs for style context
-    const uniqueLabels = [...new Set(allRefs.map((r) => [r.subject, r.material].filter(Boolean).join(" ")))];
-    const styleContext = uniqueLabels.join(", ");
-    const fullPrompt = `${TRIGGER_WORD} style, ${styleContext ? styleContext + ", " : ""}${prompt.trim()}`;
 
     const gen = await addGeneration(prompt.trim(), allRefs.map((r) => r.id));
 
@@ -45,16 +44,38 @@ export async function POST(request: NextRequest) {
         try {
             await updateGeneration(gen.id, { status: "processing" });
 
-            const input = {
-                prompt: fullPrompt,
-                loras: [{ path: latestJob.loraUrl!, scale: 1 }],
-                num_inference_steps: 30,
-                video_length: resolvedLength,
-            };
+            // Stage 1: generate a styled image using the KESSLER style LoRA
+            const imageResult = await fal.subscribe(FLUX_ENDPOINT, {
+                input: {
+                    prompt: `${TRIGGER_WORD}, ${prompt.trim()}`,
+                    loras: [{ path: latestJob.loraUrl!, scale: 1.4 }],
+                    num_inference_steps: 28,
+                    image_size: "landscape_16_9",
+                    enable_safety_checker: false,
+                    output_format: "jpeg",
+                },
+            });
 
-            const handle = await fal.queue.submit(LORA_ENDPOINT, { input });
+            const imageUrl = (imageResult.data as { images: Array<{ url: string }> }).images[0].url;
+            await updateGeneration(gen.id, { imageUrl });
 
-            await updateGeneration(gen.id, { falRequestId: handle.request_id, falEndpoint: LORA_ENDPOINT });
+            // Stage 2: animate the styled keyframe with Wan 2.1
+            const numFrames = DURATION_FRAMES[resolvedLength] ?? 81;
+            const videoHandle = await fal.queue.submit(WAN_I2V_ENDPOINT, {
+                input: {
+                    prompt: `${TRIGGER_WORD}, ${prompt.trim()}`,
+                    negative_prompt: "realistic, photographic, natural, hyperrealistic",
+                    image_url: imageUrl,
+                    num_frames: numFrames,
+                    guidance_scale: 6.0,
+                    num_inference_steps: 40,
+                },
+            });
+
+            await updateGeneration(gen.id, {
+                falRequestId: videoHandle.request_id,
+                falEndpoint: WAN_I2V_ENDPOINT,
+            });
         } catch (err) {
             console.error("Generation error:", err);
             await updateGeneration(gen.id, {

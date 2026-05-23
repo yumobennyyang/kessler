@@ -8,6 +8,7 @@ interface GenerationState {
     falRequestId: string | null;
     prompt: string;
     status: "pending" | "processing" | "completed" | "failed";
+    imageUrl: string | null;
     videoUrl: string | null;
     error: string | null;
 }
@@ -18,17 +19,22 @@ export default function HomePage() {
     const [generations, setGenerations] = useState<GenerationState[]>([]);
     const [isGenerating, setIsGenerating] = useState(false);
     const [trainingJob, setTrainingJob] = useState<TrainingJob | null | undefined>(undefined);
+    const [hasCompletedModel, setHasCompletedModel] = useState(false);
 
     useEffect(() => {
         fetch("/api/train")
             .then((r) => r.json())
             .then(setTrainingJob)
             .catch(() => setTrainingJob(null));
+        fetch("/api/train?completed=1")
+            .then((r) => r.json())
+            .then((job) => setHasCompletedModel(!!job?.loraUrl))
+            .catch(() => {});
     }, []);
 
     const pollStatus = useCallback((genId: string, falRequestId: string) => {
         let attempts = 0;
-        const MAX_ATTEMPTS = 90; // 90 × 10s = 15 min timeout
+        const MAX_ATTEMPTS = 180; // 180 × 10s = 30 min timeout
         const interval = setInterval(async () => {
             attempts++;
             if (attempts > MAX_ATTEMPTS) {
@@ -73,7 +79,7 @@ export default function HomePage() {
 
             if (!res.ok) {
                 setGenerations((prev) => [
-                    { id: gen.id || "error", falRequestId: null, prompt: prompt.trim(), status: "failed", videoUrl: null, error: gen.error || "Generation failed" },
+                    { id: gen.id || "error", falRequestId: null, prompt: prompt.trim(), status: "failed", imageUrl: null, videoUrl: null, error: gen.error || "Generation failed" },
                     ...prev,
                 ]);
             } else {
@@ -82,6 +88,7 @@ export default function HomePage() {
                     falRequestId: gen.falRequestId,
                     prompt: prompt.trim(),
                     status: "processing",
+                    imageUrl: null,
                     videoUrl: null,
                     error: null,
                 };
@@ -106,7 +113,7 @@ export default function HomePage() {
                             if (found?.falRequestId) {
                                 clearInterval(wait);
                                 setGenerations((prev) =>
-                                    prev.map((g) => g.id === gen.id ? { ...g, falRequestId: found.falRequestId } : g)
+                                    prev.map((g) => g.id === gen.id ? { ...g, falRequestId: found.falRequestId, imageUrl: found.imageUrl ?? null } : g)
                                 );
                                 pollStatus(gen.id, found.falRequestId);
                             } else if (found?.status === "failed") {
@@ -125,7 +132,7 @@ export default function HomePage() {
             setPrompt("");
         } catch {
             setGenerations((prev) => [
-                { id: "error-" + Date.now(), falRequestId: null, prompt: prompt.trim(), status: "failed", videoUrl: null, error: "Network error" },
+                { id: "error-" + Date.now(), falRequestId: null, prompt: prompt.trim(), status: "failed", imageUrl: null, videoUrl: null, error: "Network error" },
                 ...prev,
             ]);
         } finally {
@@ -133,7 +140,6 @@ export default function HomePage() {
         }
     };
 
-    const hasLoRA = trainingJob?.status === "completed";
     const isTraining = trainingJob?.status === "training" || trainingJob?.status === "pending";
 
     return (
@@ -142,9 +148,9 @@ export default function HomePage() {
             {/* Model status pill */}
             {trainingJob !== undefined && (
                 <div className="mb-8 flex items-center gap-2">
-                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${hasLoRA ? "bg-black" : isTraining ? "bg-black/40" : "bg-black/20"}`} />
+                    <span className={`inline-block h-1.5 w-1.5 rounded-full ${hasCompletedModel ? "bg-black" : isTraining ? "bg-black/40" : "bg-black/20"}`} />
                     <span className="text-[10px] tracking-widest uppercase text-[var(--text-muted)]">
-                        {hasLoRA
+                        {hasCompletedModel
                             ? "Custom model active"
                             : isTraining
                                 ? "Model training… generation unavailable"
@@ -159,7 +165,7 @@ export default function HomePage() {
                     <textarea
                         value={prompt}
                         onChange={(e) => setPrompt(e.target.value)}
-                        placeholder="Describe the video you want to create…"
+                        placeholder="Describe the world you want to generate — style is applied automatically…"
                         rows={5}
                         className="w-full resize-none bg-transparent px-5 pt-5 pb-3 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none leading-relaxed"
                         onKeyDown={(e) => { if (e.key === "Enter" && e.metaKey) handleGenerate(); }}
@@ -167,8 +173,8 @@ export default function HomePage() {
                     <div className="flex items-center justify-between px-4 pb-4">
                         <div className="flex items-center gap-1">
                             {([
-                                { frames: 129, label: "5s", cost: "~$0.30" },
-                                { frames: 257, label: "10s", cost: "~$0.60" },
+                                { frames: 129, label: "5s", cost: "~$0.40" },
+                                { frames: 257, label: "10s", cost: "~$0.80" },
                             ] as const).map((opt) => (
                                 <button
                                     key={opt.frames}
@@ -186,7 +192,7 @@ export default function HomePage() {
                         </div>
                         <button
                             onClick={handleGenerate}
-                            disabled={!prompt.trim() || isGenerating || !hasLoRA}
+                            disabled={!prompt.trim() || isGenerating || !hasCompletedModel}
                             className="rounded-lg bg-black px-5 py-2 text-xs font-semibold text-white tracking-wide transition-opacity hover:opacity-70 disabled:opacity-20 disabled:cursor-not-allowed"
                         >
                             {isGenerating ? (
@@ -213,12 +219,19 @@ export default function HomePage() {
                             </p>
 
                             {gen.status === "processing" && (
-                                <div className="flex items-center gap-3 py-6">
-                                    <svg className="h-4 w-4 animate-spin text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none">
-                                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" className="opacity-20" />
-                                        <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-                                    </svg>
-                                    <span className="text-xs text-[var(--text-muted)]">Generating — this may take several minutes</span>
+                                <div>
+                                    {gen.imageUrl && (
+                                        <img src={gen.imageUrl} alt="styled frame" className="w-full rounded-xl mb-4 opacity-80" />
+                                    )}
+                                    <div className="flex items-center gap-3 py-3">
+                                        <svg className="h-4 w-4 animate-spin text-[var(--text-muted)]" viewBox="0 0 24 24" fill="none">
+                                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2.5" className="opacity-20" />
+                                            <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                                        </svg>
+                                        <span className="text-xs text-[var(--text-muted)]">
+                                            {gen.imageUrl ? "Animating…" : "Generating styled frame…"}
+                                        </span>
+                                    </div>
                                 </div>
                             )}
 

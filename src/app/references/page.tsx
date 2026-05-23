@@ -7,12 +7,11 @@ export default function ReferencesPage() {
     const [references, setReferences] = useState<Reference[]>([]);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
-    const [editingId, setEditingId] = useState<string | null>(null);
-    const [editSubject, setEditSubject] = useState("");
-    const [editMaterial, setEditMaterial] = useState("");
+    const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
+    const [captions, setCaptions] = useState<Record<string, string>>({});
+    const [savingId, setSavingId] = useState<string | null>(null);
+    const [recaptioning, setRecaptioning] = useState(false);
     const [dragOver, setDragOver] = useState(false);
-    const [uploadSubject, setUploadSubject] = useState("");
-    const [uploadMaterial, setUploadMaterial] = useState("");
     const [pendingFiles, setPendingFiles] = useState<File[]>([]);
     const [trainingJob, setTrainingJob] = useState<TrainingJob | null>(null);
     const [startingTrain, setStartingTrain] = useState(false);
@@ -22,8 +21,15 @@ export default function ReferencesPage() {
     const fetchReferences = async () => {
         try {
             const res = await fetch("/api/references");
-            const data = await res.json();
+            const data: Reference[] = await res.json();
             setReferences(data);
+            setCaptions((prev) => {
+                const next = { ...prev };
+                for (const r of data) {
+                    if (!(r.id in next)) next[r.id] = r.caption;
+                }
+                return next;
+            });
         } catch { /* ignore */ } finally {
             setLoading(false);
         }
@@ -62,14 +68,22 @@ export default function ReferencesPage() {
         return () => { if (pollRef.current) clearInterval(pollRef.current); };
     }, [fetchTrainingJob, pollTrainingStatus]);
 
-    const uploadFile = async (file: File, subject: string, material: string) => {
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("subject", subject || file.name.replace(/\.[^.]+$/, ""));
-        formData.append("material", material);
-        const res = await fetch("/api/references/upload", { method: "POST", body: formData });
-        if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Upload failed"); }
-        return res.json();
+    const handleCaptionBlur = async (ref: Reference) => {
+        const edited = captions[ref.id]?.trim();
+        if (!edited || edited === ref.caption) return;
+        setSavingId(ref.id);
+        try {
+            const res = await fetch("/api/references", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: ref.id, caption: edited }),
+            });
+            if (res.ok) {
+                const updated: Reference = await res.json();
+                setReferences((prev) => prev.map((r) => (r.id === ref.id ? updated : r)));
+            }
+        } catch { /* ignore */ }
+        setSavingId(null);
     };
 
     const handleFileSelect = (files: FileList | null) => {
@@ -88,18 +102,26 @@ export default function ReferencesPage() {
     const handleUploadAll = async () => {
         if (pendingFiles.length === 0 || uploading) return;
         setUploading(true);
+        setUploadProgress({ done: 0, total: pendingFiles.length });
         try {
-            for (const file of pendingFiles) {
-                await uploadFile(file, uploadSubject.trim(), uploadMaterial.trim());
+            for (let i = 0; i < pendingFiles.length; i++) {
+                const file = pendingFiles[i];
+                const formData = new FormData();
+                formData.append("file", file);
+                const res = await fetch("/api/references/upload", { method: "POST", body: formData });
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.error || "Upload failed");
+                }
+                setUploadProgress({ done: i + 1, total: pendingFiles.length });
             }
             setPendingFiles([]);
-            setUploadSubject("");
-            setUploadMaterial("");
             await fetchReferences();
         } catch (err) {
             alert(err instanceof Error ? err.message : "Upload failed");
         } finally {
             setUploading(false);
+            setUploadProgress(null);
         }
     };
 
@@ -109,35 +131,27 @@ export default function ReferencesPage() {
         handleFileSelect(e.dataTransfer.files);
     };
 
+    const handleRecaptionAll = async () => {
+        if (recaptioning) return;
+        setRecaptioning(true);
+        try {
+            const res = await fetch("/api/references/caption", { method: "POST" });
+            if (res.ok) await fetchReferences();
+        } catch { /* ignore */ } finally {
+            setRecaptioning(false);
+        }
+    };
+
     const handleDelete = async (id: string) => {
         const res = await fetch("/api/references", {
             method: "DELETE",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ id }),
         });
-        if (res.ok) setReferences((prev) => prev.filter((r) => r.id !== id));
-    };
-
-    const handleEditSave = async (id: string) => {
-        if (!editSubject.trim() || !editMaterial.trim()) return;
-        const res = await fetch("/api/references", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id, subject: editSubject.trim(), material: editMaterial.trim() }),
-        });
         if (res.ok) {
-            const updated = await res.json();
-            setReferences((prev) => prev.map((r) => (r.id === id ? updated : r)));
+            setReferences((prev) => prev.filter((r) => r.id !== id));
+            setCaptions((prev) => { const next = { ...prev }; delete next[id]; return next; });
         }
-        setEditingId(null);
-        setEditSubject("");
-        setEditMaterial("");
-    };
-
-    const startEdit = (ref: Reference) => {
-        setEditingId(ref.id);
-        setEditSubject(ref.subject);
-        setEditMaterial(ref.material);
     };
 
     const handleTrain = async () => {
@@ -148,7 +162,6 @@ export default function ReferencesPage() {
             const job = await res.json();
             if (!res.ok) { alert(job.error || "Failed to start training"); return; }
             setTrainingJob(job);
-            // Start polling once falRequestId is populated
             const poll = setInterval(async () => {
                 const updated = await fetchTrainingJob();
                 if (updated?.falRequestId && (updated.status === "training" || updated.status === "pending")) {
@@ -164,7 +177,6 @@ export default function ReferencesPage() {
         }
     };
 
-    const canUpload = pendingFiles.length > 0 && !uploading && uploadSubject.trim() && uploadMaterial.trim();
     const isTraining = trainingJob?.status === "training" || trainingJob?.status === "pending";
 
     return (
@@ -174,7 +186,7 @@ export default function ReferencesPage() {
             <div className="mb-12 border-b border-[var(--border)] pb-8">
                 <h1 className="text-2xl font-semibold tracking-tight mb-1">Reference Library</h1>
                 <p className="text-sm text-[var(--text-muted)]">
-                    Tag reference images with a subject and material, then train a LoRA model on your dataset.
+                    Upload sculpture reference images. Captions are auto-generated and used as training labels — click any caption to edit.
                 </p>
             </div>
 
@@ -211,53 +223,39 @@ export default function ReferencesPage() {
                         <p className="text-sm text-[var(--text-muted)]">Training failed. {trainingJob.error}</p>
                     )}
                 </div>
-                <button
-                    onClick={handleTrain}
-                    disabled={isTraining || startingTrain || references.length < 4}
-                    title={references.length < 4 ? "Upload at least 4 reference images to train" : undefined}
-                    className="rounded-lg bg-black px-5 py-2.5 text-xs font-semibold text-white tracking-wide transition-opacity hover:opacity-70 disabled:opacity-20 disabled:cursor-not-allowed"
-                >
-                    {isTraining || startingTrain ? "Training…" : trainingJob?.status === "completed" ? "Retrain" : "Train Model"}
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleRecaptionAll}
+                        disabled={recaptioning || references.length === 0}
+                        className="rounded-lg border border-[var(--border)] px-5 py-2.5 text-xs font-semibold text-[var(--text)] tracking-wide transition-opacity hover:opacity-70 disabled:opacity-20 disabled:cursor-not-allowed"
+                    >
+                        {recaptioning ? "Recaptioning…" : "Recaption All"}
+                    </button>
+                    <button
+                        onClick={handleTrain}
+                        disabled={isTraining || startingTrain || references.length < 4}
+                        title={references.length < 4 ? "Upload at least 4 reference images to train" : undefined}
+                        className="rounded-lg bg-black px-5 py-2.5 text-xs font-semibold text-white tracking-wide transition-opacity hover:opacity-70 disabled:opacity-20 disabled:cursor-not-allowed"
+                    >
+                        {isTraining || startingTrain ? "Training…" : trainingJob?.status === "completed" ? "Retrain" : "Train Model"}
+                    </button>
+                </div>
             </div>
 
             {/* Upload */}
             <div className="mb-16">
                 <p className="text-[10px] font-medium tracking-[0.15em] uppercase text-[var(--text-muted)] mb-4">
-                    Batch Upload
+                    Upload
                 </p>
-
-                <div className="flex gap-3 mb-4">
-                    <div className="flex-1">
-                        <label className="block text-[10px] tracking-wider uppercase text-[var(--text-muted)] mb-1.5">Subject</label>
-                        <input
-                            type="text"
-                            value={uploadSubject}
-                            onChange={(e) => setUploadSubject(e.target.value)}
-                            placeholder="e.g. Tree"
-                            className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2.5 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--border-hover)] transition-colors"
-                        />
-                    </div>
-                    <div className="flex-1">
-                        <label className="block text-[10px] tracking-wider uppercase text-[var(--text-muted)] mb-1.5">Material</label>
-                        <input
-                            type="text"
-                            value={uploadMaterial}
-                            onChange={(e) => setUploadMaterial(e.target.value)}
-                            placeholder="e.g. Ceramic"
-                            className="w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2.5 text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--border-hover)] transition-colors"
-                        />
-                    </div>
-                </div>
 
                 <div
                     onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                     onDragLeave={() => setDragOver(false)}
                     onDrop={handleDrop}
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={() => !uploading && fileInputRef.current?.click()}
                     className={`flex min-h-28 cursor-pointer items-center justify-center rounded-xl border border-dashed transition-colors mb-4 ${
                         dragOver ? "border-black/30 bg-black/[0.03]" : "border-[var(--border)] hover:border-[var(--border-hover)]"
-                    }`}
+                    } ${uploading ? "pointer-events-none" : ""}`}
                 >
                     <div className="text-center py-8 px-6">
                         <svg className="mx-auto mb-2.5 h-6 w-6 text-[var(--text-muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -266,7 +264,7 @@ export default function ReferencesPage() {
                         <p className="text-xs text-[var(--text-muted)]">
                             <span className="text-[var(--text)]">Drop images here</span> or click to browse
                         </p>
-                        <p className="mt-1 text-[10px] text-[var(--text-muted)]">JPEG · PNG · WebP · GIF</p>
+                        <p className="mt-1 text-[10px] text-[var(--text-muted)]">JPEG · PNG · WebP · GIF · Captions auto-generated</p>
                     </div>
                 </div>
                 <input
@@ -281,17 +279,19 @@ export default function ReferencesPage() {
                 {pendingFiles.length > 0 && (
                     <div className="mb-4">
                         <p className="text-[10px] text-[var(--text-muted)] mb-2 tracking-wide">
-                            {pendingFiles.length} image{pendingFiles.length !== 1 ? "s" : ""} queued — all will receive the labels above
+                            {pendingFiles.length} image{pendingFiles.length !== 1 ? "s" : ""} queued
                         </p>
                         <div className="flex flex-wrap gap-1.5">
                             {pendingFiles.map((file, i) => (
                                 <div key={i} className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-2.5 py-1 text-[11px] text-[var(--text-muted)]">
                                     <span className="max-w-36 truncate">{file.name}</span>
-                                    <button onClick={() => removePending(i)} className="hover:text-[var(--text)] transition-colors">
-                                        <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                        </svg>
-                                    </button>
+                                    {!uploading && (
+                                        <button onClick={() => removePending(i)} className="hover:text-[var(--text)] transition-colors">
+                                            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                        </button>
+                                    )}
                                 </div>
                             ))}
                         </div>
@@ -300,18 +300,22 @@ export default function ReferencesPage() {
 
                 <button
                     onClick={handleUploadAll}
-                    disabled={!canUpload}
+                    disabled={pendingFiles.length === 0 || uploading}
                     className="rounded-lg bg-black px-5 py-2.5 text-xs font-semibold text-white tracking-wide transition-opacity hover:opacity-70 disabled:opacity-20 disabled:cursor-not-allowed"
                 >
-                    {uploading ? "Uploading…" : pendingFiles.length > 0 ? `Upload ${pendingFiles.length} Image${pendingFiles.length !== 1 ? "s" : ""}` : "Select images to upload"}
+                    {uploading && uploadProgress
+                        ? `Uploading ${uploadProgress.done}/${uploadProgress.total}…`
+                        : pendingFiles.length > 0
+                            ? `Upload ${pendingFiles.length} Image${pendingFiles.length !== 1 ? "s" : ""}`
+                            : "Select images to upload"}
                 </button>
             </div>
 
             {/* Gallery */}
             {loading ? (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-                    {Array.from({ length: 10 }).map((_, i) => (
-                        <div key={i} className="skeleton aspect-square rounded-xl" />
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                        <div key={i} className="skeleton rounded-xl" style={{ aspectRatio: "3/4" }} />
                     ))}
                 </div>
             ) : references.length === 0 ? (
@@ -319,33 +323,24 @@ export default function ReferencesPage() {
                     <p className="text-sm text-[var(--text-muted)]">No references yet.</p>
                 </div>
             ) : (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
                     {references.map((ref) => (
                         <div
                             key={ref.id}
-                            className="animate-fade-in group relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-card)] transition-colors hover:border-[var(--border-hover)]"
+                            className="animate-fade-in rounded-xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden transition-colors hover:border-[var(--border-hover)]"
                         >
-                            <div className="aspect-square overflow-hidden">
+                            {/* Image with delete button */}
+                            <div className="relative group aspect-square overflow-hidden">
                                 <img
                                     src={`/uploads/${ref.filename}`}
-                                    alt={ref.subject}
+                                    alt={ref.caption}
                                     className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                                 />
-                            </div>
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                            <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                    onClick={() => startEdit(ref)}
-                                    className="rounded-md bg-white/80 backdrop-blur-sm p-1.5 text-black/60 hover:text-black transition-colors"
-                                    title="Edit"
-                                >
-                                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
-                                    </svg>
-                                </button>
+                                {/* overlay is pointer-events-none so it never blocks the delete button */}
+                                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                                 <button
                                     onClick={() => handleDelete(ref.id)}
-                                    className="rounded-md bg-white/80 backdrop-blur-sm p-1.5 text-black/40 hover:text-black transition-colors"
+                                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity rounded-md bg-white/80 backdrop-blur-sm p-1.5 text-black/40 hover:text-black"
                                     title="Delete"
                                 >
                                     <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -353,38 +348,20 @@ export default function ReferencesPage() {
                                     </svg>
                                 </button>
                             </div>
+
+                            {/* Always-editable caption */}
                             <div className="p-2.5">
-                                {editingId === ref.id ? (
-                                    <div className="flex flex-col gap-1.5">
-                                        <input
-                                            type="text"
-                                            value={editSubject}
-                                            onChange={(e) => setEditSubject(e.target.value)}
-                                            onKeyDown={(e) => { if (e.key === "Escape") setEditingId(null); }}
-                                            autoFocus
-                                            placeholder="Subject"
-                                            className="w-full rounded-md border border-[var(--border-hover)] bg-transparent px-2 py-1 text-[11px] text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none"
-                                        />
-                                        <input
-                                            type="text"
-                                            value={editMaterial}
-                                            onChange={(e) => setEditMaterial(e.target.value)}
-                                            onKeyDown={(e) => { if (e.key === "Escape") setEditingId(null); }}
-                                            placeholder="Material"
-                                            className="w-full rounded-md border border-[var(--border-hover)] bg-transparent px-2 py-1 text-[11px] text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none"
-                                        />
-<button
-                                            onClick={() => handleEditSave(ref.id)}
-                                            className="rounded-md bg-black px-2 py-1 text-[10px] font-semibold text-white tracking-wide"
-                                        >
-                                            Save
-                                        </button>
-                                    </div>
-                                ) : (
-                                    <>
-                                        <p className="text-xs font-medium text-[var(--text)] line-clamp-1">{ref.subject}</p>
-                                        <p className="text-[10px] text-[var(--text-muted)] line-clamp-1 mt-0.5">{ref.material}</p>
-                                    </>
+                                <textarea
+                                    value={captions[ref.id] ?? ref.caption}
+                                    onChange={(e) =>
+                                        setCaptions((prev) => ({ ...prev, [ref.id]: e.target.value }))
+                                    }
+                                    onBlur={() => handleCaptionBlur(ref)}
+                                    rows={3}
+                                    className="w-full resize-none bg-transparent text-[11px] text-[var(--text)] placeholder:text-[var(--text-muted)] leading-relaxed focus:outline-none"
+                                />
+                                {savingId === ref.id && (
+                                    <p className="text-[10px] text-[var(--text-muted)] mt-0.5">Saving…</p>
                                 )}
                             </div>
                         </div>
