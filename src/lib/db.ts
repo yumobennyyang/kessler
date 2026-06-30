@@ -28,6 +28,7 @@ export interface TrainingJob {
     status: "pending" | "training" | "completed" | "failed";
     falRequestId: string | null;
     loraUrl: string | null;
+    loraPath: string | null;
     triggerWord: string;
     referenceCount: number;
     error: string | null;
@@ -201,6 +202,7 @@ export async function addTrainingJob(
         status: "pending",
         falRequestId: null,
         loraUrl: null,
+        loraPath: null,
         triggerWord,
         referenceCount,
         error: null,
@@ -214,7 +216,7 @@ export async function addTrainingJob(
 
 export async function updateTrainingJob(
     id: string,
-    updates: Partial<Pick<TrainingJob, "status" | "falRequestId" | "loraUrl" | "error" | "completedAt">>
+    updates: Partial<Pick<TrainingJob, "status" | "falRequestId" | "loraUrl" | "loraPath" | "error" | "completedAt">>
 ): Promise<TrainingJob | null> {
     const db = await readDB();
     const job = db.trainingJobs.find((j) => j.id === id);

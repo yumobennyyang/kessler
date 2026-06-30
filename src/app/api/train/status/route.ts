@@ -1,8 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { promises as fs } from "fs";
+import path from "path";
 import { fal } from "@/lib/fal";
 import { updateTrainingJob } from "@/lib/db";
 
 const FAL_ENDPOINT = "fal-ai/flux-lora-fast-training";
+const LORAS_DIR = path.join(process.cwd(), "loras");
+
+async function downloadLora(url: string, jobId: string): Promise<string> {
+    await fs.mkdir(LORAS_DIR, { recursive: true });
+    const buf = await fetch(url).then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.arrayBuffer();
+    });
+    const dest = path.join(LORAS_DIR, `${jobId}.safetensors`);
+    await fs.writeFile(dest, Buffer.from(buf));
+    return dest;
+}
 
 export async function GET(request: NextRequest) {
     const jobId = request.nextUrl.searchParams.get("jobId");
@@ -27,9 +41,17 @@ export async function GET(request: NextRequest) {
                 return NextResponse.json({ status: "failed", error: "No LoRA file returned" });
             }
 
+            let loraPath: string | null = null;
+            try {
+                loraPath = await downloadLora(loraUrl, jobId);
+            } catch (e) {
+                console.warn("Could not save LoRA locally:", e);
+            }
+
             await updateTrainingJob(jobId, {
                 status: "completed",
                 loraUrl,
+                loraPath,
                 completedAt: new Date().toISOString(),
             });
 
