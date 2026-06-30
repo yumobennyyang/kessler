@@ -163,7 +163,7 @@ export default function HomeSeedPage() {
             const data = await res.json();
             if (!res.ok || !data.taskId) {
                 setGenerations((prev) => [
-                    { taskId: "err-" + Date.now(), prompt: prompt.trim(), status: "failed", videoUrl: null, error: data.error ?? "Generation failed" },
+                    { taskId: "err-" + Date.now(), prompt: prompt.trim(), aspectRatio, status: "failed", videoUrl: null, error: data.error ?? "Generation failed" },
                     ...prev,
                 ]);
                 return;
@@ -181,7 +181,7 @@ export default function HomeSeedPage() {
             setPrompt("");
         } catch {
             setGenerations((prev) => [
-                { taskId: "net-" + Date.now(), prompt: prompt.trim(), status: "failed", videoUrl: null, error: "Network error" },
+                { taskId: "net-" + Date.now(), prompt: prompt.trim(), aspectRatio, status: "failed", videoUrl: null, error: "Network error" },
                 ...prev,
             ]);
         } finally {
