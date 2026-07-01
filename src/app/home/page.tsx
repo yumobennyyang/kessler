@@ -390,7 +390,7 @@ export default function HomeSeedPage() {
                                 </div>
                                 {gen.status === "completed" && gen.videoUrl && (
                                     <a
-                                        href={gen.videoUrl}
+                                        href={`/api/download?url=${encodeURIComponent(gen.videoUrl)}`}
                                         download
                                         className="flex items-center gap-1.5 rounded-lg bg-black px-3 py-2 text-xs font-medium text-white transition-opacity hover:opacity-70"
                                     >
