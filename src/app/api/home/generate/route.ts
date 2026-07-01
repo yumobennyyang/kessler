@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
 import { promises as fs } from "fs";
 import path from "path";
-import sharp from "sharp";
 import { fal } from "@/lib/fal";
 
 const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
@@ -79,21 +79,24 @@ const KEYWORD_RULES: KeywordRule[] = [
 // Terra always defines all ground surfaces
 const GROUND_LINE = "[Image7] texture covers all ground surfaces, terrain, soil, earth, pathways, and landscape floors throughout the entire scene.";
 
-// Cache keyed by filename (full) or "filename:left"/"filename:right" (cropped)
-const refUrlCache: Record<string, string> = {};
+// Pre-uploaded fal.media URLs for the 8 static reference images (order matches REFERENCE_FILES)
+const PRELOADED_REF_URLS: Record<string, string> = {
+    "burnt.png":   "https://v3b.fal.media/files/b/0aa08bcc/0LHwX0FwB4gMNOvbDrA6p_burnt.png",
+    "clump.png":   "https://v3b.fal.media/files/b/0aa08bcc/J5cVa6kNH8e-174W-CP0v_clump.png",
+    "glaze.png":   "https://v3b.fal.media/files/b/0aa08bd6/LC7ZRvdlQMR6iv_OEZTWO_glaze.png",
+    "nail.png":    "https://v3b.fal.media/files/b/0aa08bcd/xy_N3RynWTUoZscsD_stC_nail.png",
+    "plaster.png": "https://v3b.fal.media/files/b/0aa08bd7/0cbZeRDBGNXB6sQdbHn7e_plaster.png",
+    "scrap.png":   "https://v3b.fal.media/files/b/0aa08bcd/-TL1rkQ69Lh6JzMcE21wS_scrap.png",
+    "terra.png":   "https://v3b.fal.media/files/b/0aa08bce/qpStmZDkMcY_OHjNexjYj_terra.png",
+    "tree.png":    "https://v3b.fal.media/files/b/0aa08bce/K4LUj8pGmgaCUB0aNAGur_tree.png",
+};
 
-async function getFullRefUrl(filename: string): Promise<string> {
-    if (refUrlCache[filename]) return refUrlCache[filename];
-    const buf = await fs.readFile(path.join(process.cwd(), "public/references", filename));
-    const file = new File([buf as unknown as BlobPart], filename, { type: "image/png" });
-    const url = await fal.storage.upload(file);
-    refUrlCache[filename] = url;
-    return url;
-}
+// Cache for cropped variants only (generated on demand, but rare)
+const cropUrlCache: Record<string, string> = {};
 
 async function getCroppedRefUrl(filename: string, crop: "left" | "right"): Promise<string> {
     const cacheKey = `${filename}:${crop}`;
-    if (refUrlCache[cacheKey]) return refUrlCache[cacheKey];
+    if (cropUrlCache[cacheKey]) return cropUrlCache[cacheKey];
     const buf = await fs.readFile(path.join(process.cwd(), "public/references", filename));
     const { width = 100, height = 100 } = await sharp(buf).metadata();
     const halfW = Math.floor(width / 2);
@@ -107,7 +110,7 @@ async function getCroppedRefUrl(filename: string, crop: "left" | "right"): Promi
         { type: "image/jpeg" }
     );
     const url = await fal.storage.upload(croppedFile);
-    refUrlCache[cacheKey] = url;
+    cropUrlCache[cacheKey] = url;
     return url;
 }
 
@@ -184,8 +187,8 @@ export async function POST(request: NextRequest) {
     const resolvedResolution = VALID_RESOLUTIONS.includes(resolution) ? resolution : "1080p";
     const resolvedDuration = VALID_DURATIONS.includes(duration as typeof VALID_DURATIONS[number]) ? duration : 8;
 
-    // Always upload 8 full reference images (cached)
-    const envUrls = await Promise.all(REFERENCE_FILES.map(getFullRefUrl));
+    // Use pre-uploaded fal URLs — no runtime upload needed
+    const envUrls = REFERENCE_FILES.map((f) => PRELOADED_REF_URLS[f]);
 
     // Resolve keyword matches, collecting any cropped images needed
     const additionalUrls: string[] = [];
