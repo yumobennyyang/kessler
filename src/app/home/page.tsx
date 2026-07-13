@@ -59,7 +59,7 @@ export default function HomeSeedPage() {
     const [resolution, setResolution] = useState<ResolutionValue>("720p");
     const [duration, setDuration] = useState<DurationValue>(5);
 
-    const [subjectPreviewUrl, setSubjectPreviewUrl] = useState<string | null>(null);
+    const [subjectPreviewUrls, setSubjectPreviewUrls] = useState<string[]>([]);
     const [subjectPublicUrl, setSubjectPublicUrl] = useState<string | null>(null);
     const [isUploadingSubject, setIsUploadingSubject] = useState(false);
 
@@ -119,29 +119,32 @@ export default function HomeSeedPage() {
         localStorage.setItem("kessler-home-generations", JSON.stringify(generations));
     }, [generations]);
 
-    const handleSubjectSelect = async (file: File) => {
-        const localUrl = URL.createObjectURL(file);
-        setSubjectPreviewUrl(localUrl);
+    const handleSubjectSelect = async (files: File[]) => {
+        const localUrls = files.map((f) => URL.createObjectURL(f));
+        setSubjectPreviewUrls((prev) => {
+            prev.forEach((u) => URL.revokeObjectURL(u));
+            return localUrls;
+        });
         setSubjectPublicUrl(null);
         setIsUploadingSubject(true);
         try {
             const form = new FormData();
-            form.append("file", file);
+            files.forEach((f) => form.append("file", f));
             const res = await fetch("/api/subject/upload", { method: "POST", body: form });
             if (!res.ok) throw new Error("upload failed");
             const { url } = await res.json();
             setSubjectPublicUrl(url);
         } catch {
-            URL.revokeObjectURL(localUrl);
-            setSubjectPreviewUrl(null);
+            localUrls.forEach((u) => URL.revokeObjectURL(u));
+            setSubjectPreviewUrls([]);
         } finally {
             setIsUploadingSubject(false);
         }
     };
 
     const removeSubject = () => {
-        if (subjectPreviewUrl) URL.revokeObjectURL(subjectPreviewUrl);
-        setSubjectPreviewUrl(null);
+        subjectPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+        setSubjectPreviewUrls([]);
         setSubjectPublicUrl(null);
     };
 
@@ -232,24 +235,27 @@ export default function HomeSeedPage() {
                     ref={fileInputRef}
                     type="file"
                     accept="image/jpeg,image/png,image/webp"
+                    multiple
                     className="hidden"
                     onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) handleSubjectSelect(f);
+                        const files = Array.from(e.target.files ?? []);
+                        if (files.length > 0) handleSubjectSelect(files);
                         e.target.value = "";
                     }}
                 />
-                {!subjectPreviewUrl ? (
+                {subjectPreviewUrls.length === 0 ? (
                     <button
                         onClick={() => fileInputRef.current?.click()}
                         className="flex h-24 w-full items-center justify-center rounded-xl border border-dashed border-[var(--border-hover)] text-xs text-[var(--text-muted)] transition-colors hover:border-black hover:text-[var(--text)]"
                     >
-                        Click to upload subject
+                        Click to upload subject photos
                     </button>
                 ) : (
                     <div className="flex items-center gap-4 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3">
-                        <div className="relative shrink-0">
-                            <img src={subjectPreviewUrl} alt="subject" className="h-16 w-16 rounded-lg object-cover" />
+                        <div className="relative flex shrink-0 gap-1.5">
+                            {subjectPreviewUrls.map((u) => (
+                                <img key={u} src={u} alt="subject" className="h-16 w-16 rounded-lg object-cover" />
+                            ))}
                             {isUploadingSubject && (
                                 <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/40">
                                     <Spinner className="h-4 w-4 text-white" />
@@ -257,7 +263,9 @@ export default function HomeSeedPage() {
                             )}
                         </div>
                         <div className="flex-1 min-w-0">
-                            <p className="text-[10px] tracking-widest uppercase text-[var(--text-muted)]">Subject</p>
+                            <p className="text-[10px] tracking-widest uppercase text-[var(--text-muted)]">
+                                Subject{subjectPreviewUrls.length > 1 ? ` (${subjectPreviewUrls.length} photos)` : ""}
+                            </p>
                             <p className="text-xs text-[var(--text)] mt-0.5">
                                 {isUploadingSubject ? "Uploading…" : subjectPublicUrl ? "Ready" : "Upload failed"}
                             </p>
