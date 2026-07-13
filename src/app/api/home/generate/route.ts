@@ -1,8 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import sharp from "sharp";
-import { promises as fs } from "fs";
-import path from "path";
-import { fal } from "@/lib/fal";
 
 const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN;
 const REPLICATE_BASE = "https://api.replicate.com/v1";
@@ -55,7 +51,7 @@ interface KeywordRule {
 const KEYWORD_RULES: KeywordRule[] = [
     // Direct material names (full images → fixed indices)
     { pattern: /\bburnt\b/i,        label: "burnt",     refs: [{ file: "burnt.png",   crop: "full" }] },
-    { pattern: /\bclump\b/i,        label: "clump",     refs: [{ file: "clump.png",   crop: "full" }] },
+    { pattern: /\bruin(?:s|ed)?\b/i, label: "ruins",    refs: [{ file: "clump.png",   crop: "full" }] },
     { pattern: /\bglazes?\b/i,      label: "glaze",     refs: [{ file: "glaze.png",   crop: "full" }] },
     { pattern: /\bnails?\b/i,       label: "nail",      refs: [{ file: "nail.png",    crop: "full" }] },
     { pattern: /\bplaster\b/i,      label: "plaster",   refs: [{ file: "plaster.png", crop: "full" }] },
@@ -70,7 +66,7 @@ const KEYWORD_RULES: KeywordRule[] = [
     // Multi-image keywords
     { pattern: /\bmetal\b/i,  label: "metal", refs: [{ file: "nail.png",  crop: "full" }, { file: "scrap.png", crop: "full" }, { file: "terra.png", crop: "full" }] },
     { pattern: /\bclay\b/i,   label: "clay",  refs: [{ file: "burnt.png", crop: "full" }, { file: "clump.png", crop: "full" }, { file: "glaze.png", crop: "full" }] },
-    // Cropped-region keywords → appended as [Image9+]
+    // Region keywords → described in the prompt as a half of the full image
     { pattern: /\bcopper\b/i,   label: "copper", refs: [{ file: "terra.png", crop: "left" }, { file: "scrap.png", crop: "left" }] },
     { pattern: /\bglazed\b/i,   label: "glazed", refs: [{ file: "glaze.png", crop: "left" }] },
     { pattern: /\bpillars?\b/i, label: "pillar", refs: [{ file: "burnt.png", crop: "full" }] },
@@ -91,33 +87,19 @@ const PRELOADED_REF_URLS: Record<string, string> = {
     "tree.png":    "https://v3b.fal.media/files/b/0aa08bce/K4LUj8pGmgaCUB0aNAGur_tree.png",
 };
 
-// Cache for cropped variants only (generated on demand, but rare)
-const cropUrlCache: Record<string, string> = {};
-
-async function getCroppedRefUrl(filename: string, crop: "left" | "right"): Promise<string> {
-    const cacheKey = `${filename}:${crop}`;
-    if (cropUrlCache[cacheKey]) return cropUrlCache[cacheKey];
-    const buf = await fs.readFile(path.join(process.cwd(), "public/references", filename));
-    const { width = 100, height = 100 } = await sharp(buf).metadata();
-    const halfW = Math.floor(width / 2);
-    const croppedBuf = await sharp(buf)
-        .extract({ left: crop === "left" ? 0 : halfW, top: 0, width: crop === "left" ? halfW : width - halfW, height })
-        .jpeg({ quality: 90 })
-        .toBuffer();
-    const croppedFile = new File(
-        [croppedBuf as unknown as BlobPart],
-        `${filename.replace(".png", "")}_${crop}.jpg`,
-        { type: "image/jpeg" }
-    );
-    const url = await fal.storage.upload(croppedFile);
-    cropUrlCache[cacheKey] = url;
-    return url;
+interface ResolvedRef {
+    idx: number;
+    crop: CropSide;
 }
 
 interface ResolvedMatch {
     label: string;
     pattern: RegExp;
-    indices: number[];
+    refs: ResolvedRef[];
+}
+
+function refTag({ idx, crop }: ResolvedRef): string {
+    return crop === "full" ? `[Image${idx}]` : `the ${crop} half of [Image${idx}]`;
 }
 
 function buildPrompt(userPrompt: string, matches: ResolvedMatch[], subjectIdx: number | null): string {
@@ -126,21 +108,21 @@ function buildPrompt(userPrompt: string, matches: ResolvedMatch[], subjectIdx: n
     // Inject [ImageN] tags inline on first occurrence of each matched keyword
     const seenInline = new Set<number>();
     let annotatedPrompt = userPrompt.trim();
-    for (const { pattern, indices } of matches) {
-        const newTags = indices.filter((i) => !seenInline.has(i)).map((i) => `[Image${i}]`);
+    for (const { pattern, refs } of matches) {
+        const newTags = refs.filter(({ idx }) => !seenInline.has(idx)).map(({ idx }) => `[Image${idx}]`);
         if (newTags.length === 0) continue;
         let injected = false;
         annotatedPrompt = annotatedPrompt.replace(pattern, (match) => {
             if (injected) return match;
             injected = true;
-            indices.forEach((i) => seenInline.add(i));
+            refs.forEach(({ idx }) => seenInline.add(idx));
             return `${newTags.join("")} ${match}`;
         });
     }
 
     const specificLine = matches.length > 0
         ? `Specific material references: ${matches
-            .map(({ label, indices }) => `${indices.map((i) => `[Image${i}]`).join("+")} defines every "${label}" surface, texture, and form`)
+            .map(({ label, refs }) => `${refs.map(refTag).join(" + ")} defines every "${label}" surface, texture, and form`)
             .join("; ")}.`
         : "";
 
@@ -187,44 +169,23 @@ export async function POST(request: NextRequest) {
     const resolvedResolution = VALID_RESOLUTIONS.includes(resolution) ? resolution : "1080p";
     const resolvedDuration = VALID_DURATIONS.includes(duration as typeof VALID_DURATIONS[number]) ? duration : 8;
 
-    // Use pre-uploaded fal URLs — no runtime upload needed
+    // Use pre-uploaded fal URLs — no runtime upload needed.
+    // Only the 8 base refs plus an optional subject are ever sent (seedance-2.0 caps at 9);
+    // region keywords reference a half of an existing image via prompt text.
     const envUrls = REFERENCE_FILES.map((f) => PRELOADED_REF_URLS[f]);
 
-    // Resolve keyword matches, collecting any cropped images needed
-    const additionalUrls: string[] = [];
-    const cropIndexMap = new Map<string, number>(); // "file:crop" → assigned image index
-    let nextIdx = REFERENCE_FILES.length + 1; // starts at 9
+    const matches: ResolvedMatch[] = KEYWORD_RULES
+        .filter(({ pattern }) => pattern.test(prompt))
+        .map(({ pattern, label, refs }) => ({
+            pattern,
+            label,
+            refs: refs.map((ref) => ({ idx: FILE_TO_IDX[ref.file], crop: ref.crop })),
+        }));
 
-    const matches: ResolvedMatch[] = [];
-
-    for (const { pattern, label, refs } of KEYWORD_RULES) {
-        if (!pattern.test(prompt)) continue;
-
-        const indices: number[] = [];
-        for (const ref of refs) {
-            if (ref.crop === "full") {
-                indices.push(FILE_TO_IDX[ref.file]);
-            } else {
-                const cacheKey = `${ref.file}:${ref.crop}`;
-                if (cropIndexMap.has(cacheKey)) {
-                    indices.push(cropIndexMap.get(cacheKey)!);
-                } else {
-                    const url = await getCroppedRefUrl(ref.file, ref.crop);
-                    additionalUrls.push(url);
-                    cropIndexMap.set(cacheKey, nextIdx);
-                    indices.push(nextIdx);
-                    nextIdx++;
-                }
-            }
-        }
-        matches.push({ pattern, label, indices });
-    }
-
-    const subjectIdx = subjectImageUrl ? nextIdx : null;
+    const subjectIdx = subjectImageUrl ? REFERENCE_FILES.length + 1 : null;
 
     const referenceImages = [
         ...envUrls,
-        ...additionalUrls,
         ...(subjectImageUrl ? [subjectImageUrl] : []),
     ];
 
