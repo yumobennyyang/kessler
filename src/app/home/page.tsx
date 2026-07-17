@@ -27,6 +27,8 @@ type AspectRatioValue = typeof ASPECT_RATIOS[number]["value"];
 const RESOLUTIONS = ["720p", "1080p"] as const;
 type ResolutionValue = typeof RESOLUTIONS[number];
 
+const MAX_SUBJECT_PHOTOS = 6; // must match MAX_FILES in /api/subject/upload
+
 const DURATIONS = [5, 8, 10, 15] as const;
 type DurationValue = typeof DURATIONS[number];
 
@@ -59,14 +61,18 @@ export default function HomeSeedPage() {
     const [resolution, setResolution] = useState<ResolutionValue>("720p");
     const [duration, setDuration] = useState<DurationValue>(5);
 
-    const [subjectPreviewUrls, setSubjectPreviewUrls] = useState<string[]>([]);
+    const [subjectFiles, setSubjectFiles] = useState<{ file: File; previewUrl: string }[]>([]);
     const [subjectPublicUrl, setSubjectPublicUrl] = useState<string | null>(null);
     const [isUploadingSubject, setIsUploadingSubject] = useState(false);
+    const [subjectError, setSubjectError] = useState<string | null>(null);
+    const [isDraggingSubject, setIsDraggingSubject] = useState(false);
 
     const [generations, setGenerations] = useState<Generation[]>([]);
     const [isGenerating, setIsGenerating] = useState(false);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const uploadSeqRef = useRef(0);
+    const dragDepthRef = useRef(0);
 
     const pollStatus = useCallback((taskId: string) => {
         let attempts = 0;
@@ -119,33 +125,77 @@ export default function HomeSeedPage() {
         localStorage.setItem("kessler-home-generations", JSON.stringify(generations));
     }, [generations]);
 
-    const handleSubjectSelect = async (files: File[]) => {
-        const localUrls = files.map((f) => URL.createObjectURL(f));
-        setSubjectPreviewUrls((prev) => {
-            prev.forEach((u) => URL.revokeObjectURL(u));
-            return localUrls;
-        });
+    // Re-upload the full set (server collages them into one reference image)
+    const uploadSubjectSet = useCallback(async (files: File[]) => {
+        const seq = ++uploadSeqRef.current;
         setSubjectPublicUrl(null);
+        if (files.length === 0) {
+            setIsUploadingSubject(false);
+            return;
+        }
         setIsUploadingSubject(true);
         try {
             const form = new FormData();
             files.forEach((f) => form.append("file", f));
             const res = await fetch("/api/subject/upload", { method: "POST", body: form });
+            if (seq !== uploadSeqRef.current) return; // a newer set superseded this upload
             if (!res.ok) throw new Error("upload failed");
             const { url } = await res.json();
+            if (seq !== uploadSeqRef.current) return;
             setSubjectPublicUrl(url);
         } catch {
-            localUrls.forEach((u) => URL.revokeObjectURL(u));
-            setSubjectPreviewUrls([]);
+            if (seq !== uploadSeqRef.current) return;
+            setSubjectError("Upload failed — remove a photo or try adding again.");
         } finally {
-            setIsUploadingSubject(false);
+            if (seq === uploadSeqRef.current) setIsUploadingSubject(false);
         }
+    }, []);
+
+    const addSubjectFiles = (incoming: File[]) => {
+        const allowed = ["image/jpeg", "image/png", "image/webp"];
+        const images = incoming.filter((f) => allowed.includes(f.type));
+        if (images.length === 0) return;
+        const room = MAX_SUBJECT_PHOTOS - subjectFiles.length;
+        if (room <= 0) {
+            setSubjectError(`At most ${MAX_SUBJECT_PHOTOS} subject photos.`);
+            return;
+        }
+        setSubjectError(
+            images.length > room
+                ? `At most ${MAX_SUBJECT_PHOTOS} subject photos — kept the first ${room} you added.`
+                : null
+        );
+        const next = [
+            ...subjectFiles,
+            ...images.slice(0, room).map((file) => ({ file, previewUrl: URL.createObjectURL(file) })),
+        ];
+        setSubjectFiles(next);
+        uploadSubjectSet(next.map((s) => s.file));
     };
 
-    const removeSubject = () => {
-        subjectPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
-        setSubjectPreviewUrls([]);
+    const removeSubjectFile = (previewUrl: string) => {
+        setSubjectError(null);
+        const removed = subjectFiles.find((s) => s.previewUrl === previewUrl);
+        if (removed) URL.revokeObjectURL(removed.previewUrl);
+        const next = subjectFiles.filter((s) => s.previewUrl !== previewUrl);
+        setSubjectFiles(next);
+        uploadSubjectSet(next.map((s) => s.file));
+    };
+
+    const clearSubjects = () => {
+        uploadSeqRef.current++;
+        subjectFiles.forEach((s) => URL.revokeObjectURL(s.previewUrl));
+        setSubjectFiles([]);
         setSubjectPublicUrl(null);
+        setIsUploadingSubject(false);
+        setSubjectError(null);
+    };
+
+    const handleSubjectDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        dragDepthRef.current = 0;
+        setIsDraggingSubject(false);
+        addSubjectFiles(Array.from(e.dataTransfer.files ?? []));
     };
 
     const handleGenerate = async () => {
@@ -238,44 +288,84 @@ export default function HomeSeedPage() {
                     multiple
                     className="hidden"
                     onChange={(e) => {
-                        const files = Array.from(e.target.files ?? []);
-                        if (files.length > 0) handleSubjectSelect(files);
+                        addSubjectFiles(Array.from(e.target.files ?? []));
                         e.target.value = "";
                     }}
                 />
-                {subjectPreviewUrls.length === 0 ? (
-                    <button
-                        onClick={() => fileInputRef.current?.click()}
-                        className="flex h-24 w-full items-center justify-center rounded-xl border border-dashed border-[var(--border-hover)] text-xs text-[var(--text-muted)] transition-colors hover:border-black hover:text-[var(--text)]"
-                    >
-                        Click to upload subject photos
-                    </button>
-                ) : (
-                    <div className="flex items-center gap-4 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3">
-                        <div className="relative flex shrink-0 gap-1.5">
-                            {subjectPreviewUrls.map((u) => (
-                                <img key={u} src={u} alt="subject" className="h-16 w-16 rounded-lg object-cover" />
-                            ))}
-                            {isUploadingSubject && (
-                                <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/40">
-                                    <Spinner className="h-4 w-4 text-white" />
-                                </div>
-                            )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                            <p className="text-[10px] tracking-widest uppercase text-[var(--text-muted)]">
-                                Subject{subjectPreviewUrls.length > 1 ? ` (${subjectPreviewUrls.length} photos)` : ""}
-                            </p>
-                            <p className="text-xs text-[var(--text)] mt-0.5">
-                                {isUploadingSubject ? "Uploading…" : subjectPublicUrl ? "Ready" : "Upload failed"}
-                            </p>
-                        </div>
-                        <button onClick={removeSubject} className="shrink-0 rounded-md p-1 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
-                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                            </svg>
+                <div
+                    onDragEnter={(e) => {
+                        e.preventDefault();
+                        dragDepthRef.current++;
+                        setIsDraggingSubject(true);
+                    }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDragLeave={(e) => {
+                        e.preventDefault();
+                        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+                        if (dragDepthRef.current === 0) setIsDraggingSubject(false);
+                    }}
+                    onDrop={handleSubjectDrop}
+                >
+                    {subjectFiles.length === 0 ? (
+                        <button
+                            onClick={() => fileInputRef.current?.click()}
+                            className={`flex h-24 w-full items-center justify-center rounded-xl border border-dashed text-xs transition-colors ${isDraggingSubject
+                                    ? "border-black bg-black/5 text-[var(--text)]"
+                                    : "border-[var(--border-hover)] text-[var(--text-muted)] hover:border-black hover:text-[var(--text)]"
+                                }`}
+                        >
+                            {isDraggingSubject ? "Drop photos here" : "Click or drag & drop subject photos — add more anytime"}
                         </button>
-                    </div>
+                    ) : (
+                        <div className={`rounded-xl border bg-[var(--bg-elevated)] px-4 py-3 transition-colors ${isDraggingSubject ? "border-black" : "border-[var(--border)]"}`}>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                {subjectFiles.map(({ previewUrl }) => (
+                                    <div key={previewUrl} className="group relative shrink-0">
+                                        <img src={previewUrl} alt="subject" className="h-16 w-16 rounded-lg object-cover" />
+                                        <button
+                                            onClick={() => removeSubjectFile(previewUrl)}
+                                            aria-label="Remove photo"
+                                            className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black text-white opacity-0 transition-opacity group-hover:opacity-100"
+                                        >
+                                            <svg className="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                ))}
+                                {subjectFiles.length < MAX_SUBJECT_PHOTOS && (
+                                    <button
+                                        onClick={() => fileInputRef.current?.click()}
+                                        aria-label="Add more photos"
+                                        className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-dashed border-[var(--border-hover)] text-[var(--text-muted)] transition-colors hover:border-black hover:text-[var(--text)]"
+                                    >
+                                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
+                                        </svg>
+                                    </button>
+                                )}
+                                <div className="ml-auto flex items-center gap-3 pl-3">
+                                    <div className="text-right">
+                                        <p className="text-[10px] tracking-widest uppercase text-[var(--text-muted)]">
+                                            {subjectFiles.length} photo{subjectFiles.length > 1 ? "s" : ""}
+                                        </p>
+                                        <p className="text-xs text-[var(--text)] mt-0.5 flex items-center justify-end gap-1.5">
+                                            {isUploadingSubject && <Spinner className="h-3 w-3" />}
+                                            {isUploadingSubject ? "Uploading…" : subjectPublicUrl ? "Ready" : "Not uploaded"}
+                                        </p>
+                                    </div>
+                                    <button onClick={clearSubjects} aria-label="Remove all photos" className="shrink-0 rounded-md p-1 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors">
+                                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+                {subjectError && (
+                    <p className="mt-2 text-xs text-[var(--danger)]">{subjectError}</p>
                 )}
             </div>
 
