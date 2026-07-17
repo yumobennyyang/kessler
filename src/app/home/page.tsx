@@ -29,6 +29,40 @@ type ResolutionValue = typeof RESOLUTIONS[number];
 
 const MAX_SUBJECT_PHOTOS = 6; // must match MAX_FILES in /api/subject/upload
 
+// Vercel rejects request bodies over 4.5MB, and the full photo set is re-sent on
+// every add — 6 photos at these settings stay under ~3MB even for noisy images.
+// The server collages at 720px cell height, so 1280px is plenty of resolution.
+const PHOTO_MAX_EDGE = 1280;
+const PHOTO_MAX_BYTES = 500_000;
+
+async function compressSubjectPhoto(file: File): Promise<File> {
+    try {
+        const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+        const scale = Math.min(1, PHOTO_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+        if (scale === 1 && file.size <= PHOTO_MAX_BYTES) {
+            bitmap.close();
+            return file;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(bitmap.width * scale);
+        canvas.height = Math.round(bitmap.height * scale);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+            bitmap.close();
+            return file;
+        }
+        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close();
+        const blob = await new Promise<Blob | null>((resolve) =>
+            canvas.toBlob(resolve, "image/jpeg", 0.82)
+        );
+        if (!blob || blob.size >= file.size) return file;
+        return new File([blob], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
+    } catch {
+        return file; // fall back to the original; worst case the server rejects it as before
+    }
+}
+
 const DURATIONS = [5, 8, 10, 15] as const;
 type DurationValue = typeof DURATIONS[number];
 
@@ -151,7 +185,7 @@ export default function HomeSeedPage() {
         }
     }, []);
 
-    const addSubjectFiles = (incoming: File[]) => {
+    const addSubjectFiles = async (incoming: File[]) => {
         const allowed = ["image/jpeg", "image/png", "image/webp"];
         const images = incoming.filter((f) => allowed.includes(f.type));
         if (images.length === 0) return;
@@ -165,9 +199,11 @@ export default function HomeSeedPage() {
                 ? `At most ${MAX_SUBJECT_PHOTOS} subject photos — kept the first ${room} you added.`
                 : null
         );
+        setIsUploadingSubject(true);
+        const compressed = await Promise.all(images.slice(0, room).map(compressSubjectPhoto));
         const next = [
             ...subjectFiles,
-            ...images.slice(0, room).map((file) => ({ file, previewUrl: URL.createObjectURL(file) })),
+            ...compressed.map((file) => ({ file, previewUrl: URL.createObjectURL(file) })),
         ];
         setSubjectFiles(next);
         uploadSubjectSet(next.map((s) => s.file));

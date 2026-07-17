@@ -1,5 +1,7 @@
 .env.local
 node_modules/
 .next/
+.DS_Store
+tsconfig.tsbuildinfo
 public/uploads/*
 !public/uploads/.gitkeep
