@@ -5,3 +5,6 @@ node_modules/
 tsconfig.tsbuildinfo
 public/uploads/*
 !public/uploads/.gitkeep
+
+# Original 2.0 reference collages (~150MB source files) — only generated thumbs/ and large/ ship
+public/references_2.0/*.png
