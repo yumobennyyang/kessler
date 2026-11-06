@@ -189,7 +189,7 @@ export default function StudioPage() {
                 return;
             }
             try {
-                const res = await fetch(`/api/home/status?taskId=${encodeURIComponent(taskId)}`);
+                const res = await fetch(`/api/status?taskId=${encodeURIComponent(taskId)}`);
                 const data = await res.json();
                 if (data.status === "completed" || data.status === "failed") {
                     clearInterval(interval);

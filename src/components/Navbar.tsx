@@ -8,7 +8,7 @@ export function Navbar() {
                     <Link href="/studio" className="text-xs font-semibold tracking-[0.2em] text-[var(--text)] uppercase no-underline">
                         Kessler
                     </Link>
-                    {/* Environment and Studio tabs hidden while Studio is the only page; /home still works by URL. */}
+                    {/* Nav links hidden while Studio is the default; Environment is still at /environment. */}
                 </div>
                 <a
                     href="https://replicate.com/account/billing"

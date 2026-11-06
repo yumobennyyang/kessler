@@ -90,7 +90,7 @@ function Spinner({ className = "h-4 w-4" }: { className?: string }) {
     );
 }
 
-export default function HomeSeedPage() {
+export default function EnvironmentPage() {
     const [prompt, setPrompt] = useState("");
     const [aspectRatio, setAspectRatio] = useState<AspectRatioValue>("16:9");
     const [resolution, setResolution] = useState<ResolutionValue>("720p");
@@ -126,7 +126,7 @@ export default function HomeSeedPage() {
                 return;
             }
             try {
-                const res = await fetch(`/api/home/status?taskId=${encodeURIComponent(taskId)}`);
+                const res = await fetch(`/api/status?taskId=${encodeURIComponent(taskId)}`);
                 const data = await res.json();
                 if (data.status === "completed" || data.status === "failed") {
                     clearInterval(interval);
@@ -239,7 +239,7 @@ export default function HomeSeedPage() {
         if (!prompt.trim() || isGenerating) return;
         setIsGenerating(true);
         try {
-            const res = await fetch("/api/home/generate", {
+            const res = await fetch("/api/environment/generate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
