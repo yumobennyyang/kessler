@@ -9,7 +9,7 @@ const MODEL = "bytedance/seedance-2.0";
 const MAX_SLOTS = 9; // seedance-2.0 reference image cap
 
 const VALID_ASPECT_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
-const VALID_RESOLUTIONS = ["720p", "1080p"];
+const VALID_RESOLUTIONS = ["720p", "1080p", "4k"];
 const VALID_DURATIONS = [5, 8, 10, 15];
 
 // Rewrites user-facing catalog numbers ("texture 4", "#12") into the

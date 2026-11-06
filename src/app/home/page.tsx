@@ -24,7 +24,7 @@ const ASPECT_RATIOS = [
 
 type AspectRatioValue = typeof ASPECT_RATIOS[number]["value"];
 
-const RESOLUTIONS = ["720p", "1080p"] as const;
+const RESOLUTIONS = ["720p", "1080p", "4k"] as const;
 type ResolutionValue = typeof RESOLUTIONS[number];
 
 const MAX_SUBJECT_PHOTOS = 6; // must match MAX_FILES in /api/subject/upload
@@ -69,6 +69,7 @@ type DurationValue = typeof DURATIONS[number];
 const COST: Record<ResolutionValue, Record<DurationValue, string>> = {
     "720p": { 5: "$0.90", 8: "$1.44", 10: "$1.80", 15: "$2.70" },
     "1080p": { 5: "$2.25", 8: "$3.60", 10: "$4.50", 15: "$6.75" },
+    "4k": { 5: "$5.00", 8: "$8.00", 10: "$10.00", 15: "$15.00" },
 };
 
 interface Generation {

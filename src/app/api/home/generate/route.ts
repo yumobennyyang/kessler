@@ -30,7 +30,7 @@ export const VALID_ASPECT_RATIOS = [
 ] as const;
 
 export type AspectRatioValue = typeof VALID_ASPECT_RATIOS[number]["value"];
-export const VALID_RESOLUTIONS = ["720p", "1080p"] as const;
+export const VALID_RESOLUTIONS = ["720p", "1080p", "4k"] as const;
 export type ResolutionValue = typeof VALID_RESOLUTIONS[number];
 export const VALID_DURATIONS = [5, 8, 10, 15] as const;
 
